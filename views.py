@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
+from models import ProjectSchema
 
 class AppView(tk.Tk):
     def __init__(self, controller):
@@ -42,8 +43,8 @@ class AppView(tk.Tk):
         self.active_only_var = tk.BooleanVar()
         tk.Checkbutton(top, text="Active Only", variable=self.active_only_var, command=self._refresh_projects).pack(side='left', padx=10)
         tk.Button(top, text="Add Project", command=self._add_project_dialog).pack(side='right', padx=10)
-        # Table
-        columns = ["id", "Project Name", "location", "start_date", "end_date", "active", "stage", "document_path"]
+        # Table columns driven by schema
+        columns = ["id", "Project Name"] + [label for label, _ in ProjectSchema.FIELDS]
         style = ttk.Style()
         style.configure("Bold.Treeview.Heading", font=("Arial", 10, "bold"))
         self.project_tree = ttk.Treeview(self.main_frame, columns=columns, show='headings', style="Bold.Treeview")
@@ -68,20 +69,27 @@ class AppView(tk.Tk):
         active_only = self.active_only_var.get()
         projects = self.controller.list_projects(search, active_only)
         for p in projects:
-            stage = self.controller.get_stage(p.stage_id).name if p.stage_id else ""
-            project_name = self._auto_project_name(p)
-            # Fix: handle None end_date gracefully
-            end_date = p.end_date if p.end_date else ""
-            self.project_tree.insert('', 'end', values=(p.id, project_name, p.location, p.start_date, end_date, 'Yes' if p.active else 'No', stage, p.document_path))
+            schema = self.controller.get_project_schema(p.id)
+            if not schema:
+                continue
+            row = [
+                schema.id,
+                self._auto_project_name(schema)
+            ]
+            for label, attr in ProjectSchema.FIELDS:
+                value = getattr(schema, attr)
+                if label == "Active":
+                    value = 'Yes' if value else 'No'
+                row.append(value if value is not None else "")
+            self.project_tree.insert('', 'end', values=tuple(row))
 
-    def _auto_project_name(self, project):
-        # Auto-generate from customer(s) and location
-        roles = self.controller.list_project_roles(project.id)
-        customers = [self.controller.get_contact(r.contact_id) for r in roles if r.role == 'Customer']
+    def _auto_project_name(self, project_schema):
+        # Use roles and location from schema
+        customers = [project_schema.roles.get(label, "") for label in ["Customer 1", "Customer 2"] if project_schema.roles.get(label, "")]
         if customers:
-            names = ', '.join(f"{c.first_name} {c.last_name}" for c in customers)
-            return f"{names} - {project.location}"
-        return f"Project {project.id} - {project.location}"
+            names = ', '.join(customers)
+            return f"{names} - {project_schema.location}"
+        return f"Project {project_schema.id} - {project_schema.location}"
 
     def _on_project_double_click(self, event):
         item = self.project_tree.selection()
@@ -91,8 +99,8 @@ class AppView(tk.Tk):
 
     # --- Project Detail View ---
     def _show_project_detail(self, project_id):
-        project = self.controller.get_project(project_id)
-        if not project:
+        project_schema = self.controller.get_project_schema(project_id)
+        if not project_schema:
             messagebox.showerror("Error", "Project not found.")
             return
         self._clear_main()
@@ -100,73 +108,28 @@ class AppView(tk.Tk):
         self.main_frame.pack(fill='both', expand=True)
         top = tk.Frame(self.main_frame)
         top.pack(fill='x', pady=5)
-        # Centered title
-        title = tk.Label(top, text=f"Project: {self._auto_project_name(project)}", font=("Arial", 16, "bold"))
+        title = tk.Label(top, text=f"Project: {self._auto_project_name(project_schema)}", font=("Arial", 16, "bold"))
         title.pack(side='top', pady=10, anchor='center', expand=True)
-        # (Back button removed)
         form = tk.Frame(self.main_frame)
         form.pack(fill='x', pady=10)
         contacts = self.controller.list_contacts()
         contact_names = [f"{c.first_name} {c.last_name}" for c in contacts]
-        cust_labels = ["Customer 1", "Customer 2"]
-        project_roles = self.controller.list_project_roles(project.id)
-        def get_contact_id_for_role(role, index=0):
-            matches = [r for r in project_roles if r.role == role]
-            if len(matches) > index:
-                return matches[index].contact_id
-            return None
         self.role_vars = {}
         self.project_detail_vars = {}
         row_idx = 0
-        # Customer 1 and Customer 2
-        for idx, cust_label in enumerate(cust_labels):
-            tk.Label(form, text=cust_label, font=("Arial", 12, "bold")).grid(row=row_idx, column=0, sticky='e', padx=5, pady=4)
-            var = tk.StringVar()
-            contact_id = get_contact_id_for_role("Customer", idx)
-            if contact_id:
-                contact = next((c for c in contacts if c.id == contact_id), None)
-                if contact:
-                    var.set(f"{contact.first_name} {contact.last_name}")
-            om = ttk.Combobox(form, textvariable=var, values=contact_names, state='readonly')
-            om.grid(row=row_idx, column=1, sticky='w')
-            self.role_vars[cust_label] = var
-            row_idx += 1
-        # Location field
-        tk.Label(form, text="Location", font=("Arial", 12, "bold")).grid(row=row_idx, column=0, sticky='e', padx=5, pady=4)
-        var = tk.StringVar(value=project.location)
-        tk.Entry(form, textvariable=var, width=22).grid(row=row_idx, column=1, sticky='w')
-        self.project_detail_vars["Location"] = var
-        row_idx += 1
-        # Inspector, Constructor, Consultant
-        extra_roles = [
-            ("Constructor", "Constructor"),
-            ("Inspector", "Inspector"),
-            ("Consultant", "Consultant")
-        ]
-        for label, role in extra_roles:
+        # Role dropdowns (schema-driven)
+        for label in project_schema.ROLE_LABELS:
             tk.Label(form, text=label, font=("Arial", 12, "bold")).grid(row=row_idx, column=0, sticky='e', padx=5, pady=4)
-            var = tk.StringVar()
-            contact_id = get_contact_id_for_role(role)
-            if contact_id:
-                contact = next((c for c in contacts if c.id == contact_id), None)
-                if contact:
-                    var.set(f"{contact.first_name} {contact.last_name}")
+            var = tk.StringVar(value=project_schema.roles.get(label, ""))
             om = ttk.Combobox(form, textvariable=var, values=contact_names, state='readonly')
             om.grid(row=row_idx, column=1, sticky='w')
             self.role_vars[label] = var
             row_idx += 1
-        # Now add the rest of the project fields
-        fields = [
-            ("Start Date", project.start_date),
-            ("End Date", project.end_date),
-            ("Active", project.active),
-            ("Stage", self.controller.get_stage(project.stage_id).name if project.stage_id else ""),
-            ("Document Path", project.document_path)
-        ]
+        # Project fields (schema-driven)
         self._end_date_entry = None
-        # Do NOT re-initialize self.project_detail_vars here!
-        for label, value in fields:
+        for label, attr in project_schema.FIELDS:
             tk.Label(form, text=label, font=("Arial", 12, "bold")).grid(row=row_idx, column=0, sticky='e', padx=5, pady=4)
+            value = getattr(project_schema, attr)
             if label == "Active":
                 var = tk.BooleanVar(value=value)
                 cb = tk.Checkbutton(form, variable=var, command=self._on_active_toggle)
@@ -178,7 +141,7 @@ class AppView(tk.Tk):
                 var = tk.StringVar(value=value)
                 om = ttk.Combobox(form, textvariable=var, values=stage_names, state='readonly')
                 om.grid(row=row_idx, column=1, sticky='w')
-                om.bind('<<ComboboxSelected>>', lambda e: self._reload_stage_tasks(project))
+                om.bind('<<ComboboxSelected>>', lambda e: self._reload_stage_tasks(project_schema))
                 self.project_detail_vars[label] = var
             elif label == "End Date":
                 var = tk.StringVar(value=value if value else "")
@@ -193,28 +156,39 @@ class AppView(tk.Tk):
                 btn = tk.Button(form, text="Browse", command=lambda v=var: self._browse_file(v))
                 btn.grid(row=row_idx, column=2, sticky='w')
                 self.project_detail_vars[label] = var
-            elif label == "Start Date":
-                var = tk.StringVar(value=value)
-                tk.Entry(form, textvariable=var, width=22).grid(row=row_idx, column=1, sticky='w')
-                self.project_detail_vars[label] = var
             else:
                 var = tk.StringVar(value=value)
                 tk.Entry(form, textvariable=var, width=30).grid(row=row_idx, column=1, sticky='w')
                 self.project_detail_vars[label] = var
             row_idx += 1
-        # Stage Tasks section (replace label, align left)
         tk.Label(self.main_frame, text="Stage Tasks", font=("Arial", 13, "bold"), anchor='w', justify='left').pack(anchor='w', pady=8, padx=10)
-        self._show_project_stage_tasks(project)
+        self._show_project_stage_tasks(project_schema)
         self._update_end_date_state()
-        # Save/Delete buttons at the bottom, center-aligned
         btns = tk.Frame(self.main_frame)
         btns.pack(side='bottom', pady=20)
-        save_btn = tk.Button(btns, text="Save", width=12, command=lambda: self._save_project_detail(project))
-        delete_btn = tk.Button(btns, text="Delete", width=12, command=lambda pid=project.id: self._delete_project(pid))
+        save_btn = tk.Button(btns, text="Save", width=12, command=lambda: self._save_project_detail(project_schema))
+        delete_btn = tk.Button(btns, text="Delete", width=12, command=lambda pid=project_schema.id: self._delete_project(pid))
         close_btn = tk.Button(btns, text="Close", width=12, command=self._show_projects)
         save_btn.pack(side='left', padx=5)
         delete_btn.pack(side='left', padx=5)
         close_btn.pack(side='left', padx=5)
+
+    def _show_project_stage_tasks(self, project_schema):
+        if hasattr(self, '_stage_task_frame') and self._stage_task_frame:
+            self._stage_task_frame.destroy()
+        self._stage_task_frame = tk.Frame(self.main_frame)
+        self._stage_task_frame.pack(fill='x', pady=2)
+        stage_name = self.project_detail_vars["Stage"].get() if "Stage" in self.project_detail_vars else None
+        stage_id = None
+        for s in self.controller.list_stages():
+            if s.name == stage_name:
+                stage_id = s.id
+                break
+        task_schemas = self.controller.get_task_schemas_for_project_stage(project_schema.id, stage_id) if stage_id else []
+        for t in task_schemas:
+            var = tk.BooleanVar(value=t.is_done)
+            cb = tk.Checkbutton(self._stage_task_frame, text=t.description, variable=var, command=lambda tid=t.id, v=var: self._toggle_task_done(project_schema.id, tid, v))
+            cb.pack(anchor='w', padx=10)
 
     def _on_active_toggle(self):
         self._update_end_date_state()
@@ -228,16 +202,18 @@ class AppView(tk.Tk):
             else:
                 self._end_date_entry.config(state='normal')
 
-    def _save_project_detail(self, project):
+    def _save_project_detail(self, project_schema):
         try:
-            location = self.project_detail_vars["Location"].get()
-            start_date = self.project_detail_vars["Start Date"].get()
-            active = self.project_detail_vars["Active"].get()
-            stage_name = self.project_detail_vars["Stage"].get()
-            document_path = self.project_detail_vars["Document Path"].get()
+            # Use schema field keys for mapping
+            field_map = dict(ProjectSchema.FIELDS)
+            location = self.project_detail_vars.get("Location", tk.StringVar()).get()
+            start_date = self.project_detail_vars.get("Start Date", tk.StringVar()).get()
+            active = self.project_detail_vars.get("Active", tk.BooleanVar()).get()
+            stage_name = self.project_detail_vars.get("Stage", tk.StringVar()).get()
+            document_path = self.project_detail_vars.get("Document Path", tk.StringVar()).get()
             stage_id = next((s.id for s in self.controller.list_stages() if s.name == stage_name), None)
-            end_date = self.project_detail_vars["End Date"].get() if not active else None
-            updated = project
+            end_date = self.project_detail_vars.get("End Date", tk.StringVar()).get() if not active else None
+            updated = self.controller.get_project(project_schema.id)
             updated.location = location
             updated.start_date = start_date
             updated.end_date = end_date
@@ -245,53 +221,25 @@ class AppView(tk.Tk):
             updated.stage_id = stage_id
             updated.document_path = document_path
             self.controller.update_project(updated)
-            # Update project roles based on dropdowns
-            # Remove all current roles for this project, then add new ones
-            self.controller.project_role_model.db.execute_query("DELETE FROM project_roles WHERE project_id=?", (project.id,))
+            self.controller.project_role_model.db.execute_query("DELETE FROM project_roles WHERE project_id=?", (project_schema.id,))
             contacts = self.controller.list_contacts()
-            role_map = {
-                "Customer 1": "Customer",
-                "Customer 2": "Customer",
-                "Constructor": "Constructor",
-                "Inspector": "Inspector",
-                "Consultant": "Consultant"
-            }
+            role_map = {label: (label if label not in ["Customer 1", "Customer 2"] else "Customer") for label in ProjectSchema.ROLE_LABELS}
             for label, var in self.role_vars.items():
                 name = var.get()
                 if name:
                     contact = next((c for c in contacts if f"{c.first_name} {c.last_name}" == name), None)
                     if contact:
-                        self.controller.add_project_role(project.id, contact.id, role_map[label])
+                        self.controller.add_project_role(project_schema.id, contact.id, role_map[label])
             messagebox.showinfo("Saved", "Project updated successfully.")
             self._show_projects()
         except Exception as e:
-            messagebox.showerror("Error", str(e))
+            import traceback
+            messagebox.showerror("Error", f"{e}\n\n{traceback.format_exc()}")
 
     def _delete_project(self, project_id):
         if messagebox.askyesno("Confirm", "Delete this project?"):
             self.controller.delete_project(project_id)
             self._show_projects()
-
-    def _show_project_stage_tasks(self, project):
-        # Remove previous task frame if exists
-        if hasattr(self, '_stage_task_frame') and self._stage_task_frame:
-            self._stage_task_frame.destroy()
-        self._stage_task_frame = tk.Frame(self.main_frame)
-        self._stage_task_frame.pack(fill='x', pady=2)
-        stage_id = None
-        stage_name = self.project_detail_vars["Stage"].get() if "Stage" in self.project_detail_vars else None
-        if stage_name:
-            for s in self.controller.list_stages():
-                if s.name == stage_name:
-                    stage_id = s.id
-                    break
-        tasks = self.controller.list_tasks_by_stage(stage_id) if stage_id else []
-        project_tasks = {t.task_id: t for t in self.controller.list_project_stage_tasks(project.id)}
-        for t in tasks:
-            is_done = project_tasks.get(t.id, None).is_done if t.id in project_tasks else False
-            var = tk.BooleanVar(value=is_done)
-            cb = tk.Checkbutton(self._stage_task_frame, text=t.description, variable=var, command=lambda tid=t.id, v=var: self._toggle_task_done(project.id, tid, v))
-            cb.pack(anchor='w', padx=10)
 
     def _reload_stage_tasks(self, project):
         self._show_project_stage_tasks(project)
@@ -316,8 +264,7 @@ class AppView(tk.Tk):
         dialog.geometry("400x500")
         contacts = self.controller.list_contacts()
         contact_names = [f"{c.first_name} {c.last_name}" for c in contacts]
-        # Customer 1 and Customer 2 dropdowns (now at the top)
-        cust_labels = ["Customer 1", "Customer 2"]
+        cust_labels = ProjectSchema.ROLE_LABELS
         customer_vars = {}
         for j, cust_label in enumerate(cust_labels):
             tk.Label(dialog, text=cust_label).grid(row=j, column=0, sticky='e', padx=5, pady=4)
@@ -325,22 +272,11 @@ class AppView(tk.Tk):
             om = ttk.Combobox(dialog, textvariable=var, values=contact_names, state='readonly')
             om.grid(row=j, column=1, sticky='w')
             customer_vars[cust_label] = var
-        # Add Constructor, Inspector, Consultant dropdowns
-        extra_roles = ["Constructor", "Inspector", "Consultant"]
-        extra_vars = {}
-        for i, role in enumerate(extra_roles):
-            row_idx = len(cust_labels) + i
-            tk.Label(dialog, text=role).grid(row=row_idx, column=0, sticky='e', padx=5, pady=4)
-            var = tk.StringVar()
-            om = ttk.Combobox(dialog, textvariable=var, values=contact_names, state='readonly')
-            om.grid(row=row_idx, column=1, sticky='w')
-            extra_vars[role] = var
-        # Adjust fields to start after all role dropdowns
-        fields = ["Location", "Start Date", "End Date", "Active", "Stage", "Document Path"]
+        fields = [label for label, _ in ProjectSchema.FIELDS]
         vars = {}
         end_date_entry = None
         for i, label in enumerate(fields):
-            row_idx = i + len(cust_labels) + len(extra_roles)
+            row_idx = i + len(cust_labels)
             tk.Label(dialog, text=label).grid(row=row_idx, column=0, sticky='e', padx=5, pady=4)
             if label == "Active":
                 var = tk.BooleanVar(value=True)
@@ -367,10 +303,6 @@ class AppView(tk.Tk):
                 btn = tk.Button(dialog, text="Browse", command=lambda v=var: self._browse_file(v))
                 btn.grid(row=row_idx, column=2, sticky='w')
                 vars[label] = var
-            elif label == "Start Date":
-                var = tk.StringVar()
-                tk.Entry(dialog, textvariable=var, width=22).grid(row=row_idx, column=1, sticky='w')
-                vars[label] = var
             else:
                 var = tk.StringVar()
                 tk.Entry(dialog, textvariable=var, width=30).grid(row=row_idx, column=1, sticky='w')
@@ -386,15 +318,16 @@ class AppView(tk.Tk):
         update_end_date_state()
         def add():
             try:
-                location = vars["Location"].get()
-                start_date = vars["Start Date"].get()
-                active = vars["Active"].get()
-                stage_name = vars["Stage"].get()
-                document_path = vars["Document Path"].get()
+                # Use schema field keys for mapping
+                field_map = dict(ProjectSchema.FIELDS)
+                location = vars.get("Location", tk.StringVar()).get()
+                start_date = vars.get("Start Date", tk.StringVar()).get()
+                active = vars.get("Active", tk.BooleanVar()).get()
+                stage_name = vars.get("Stage", tk.StringVar()).get()
+                document_path = vars.get("Document Path", tk.StringVar()).get()
                 stage_id = next((s.id for s in self.controller.list_stages() if s.name == stage_name), None)
-                end_date = vars["End Date"].get() if not active else None
+                end_date = vars.get("End Date", tk.StringVar()).get() if not active else None
                 project_id = self.controller.create_project(location, start_date, end_date, active, stage_id, document_path)
-                # Defensive: check project_id is valid
                 if not project_id:
                     last_row = self.controller.project_model.db.execute_query("SELECT id FROM projects ORDER BY id DESC LIMIT 1", fetchone=True)
                     if last_row:
@@ -406,20 +339,13 @@ class AppView(tk.Tk):
                     if name:
                         contact = next((c for c in contacts if f"{c.first_name} {c.last_name}" == name), None)
                         if contact:
-                            self.controller.add_project_role(project_id, contact.id, "Customer")
-                for role in extra_roles:
-                    name = extra_vars[role].get()
-                    if name:
-                        contact = next((c for c in contacts if f"{c.first_name} {c.last_name}" == name), None)
-                        if contact:
-                            self.controller.add_project_role(project_id, contact.id, role)
+                            self.controller.add_project_role(project_id, contact.id, cust_label if cust_label not in ["Customer 1", "Customer 2"] else "Customer")
                 dialog.destroy()
                 self._refresh_projects()
             except Exception as e:
                 messagebox.showerror("Error", str(e))
-        # Add Save and Cancel buttons next to each other at the bottom
         btn_frame = tk.Frame(dialog)
-        btn_frame.grid(row=len(fields)+len(cust_labels)+len(extra_roles), column=0, columnspan=2, pady=10)
+        btn_frame.grid(row=len(fields)+len(cust_labels), column=0, columnspan=2, pady=10)
         save_btn = tk.Button(btn_frame, text="Save", command=add, width=12)
         save_btn.pack(side='left', padx=8)
         cancel_btn = tk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=12)

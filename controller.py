@@ -1,6 +1,6 @@
 from models import (
     ProjectModel, ContactModel, StageModel, TaskModel, ProjectRoleModel, ProjectStageTaskModel,
-    Project, Contact
+    Project, Contact, ProjectSchema, ContactSchema, TaskSchema
 )
 
 class Controller:
@@ -83,3 +83,48 @@ class Controller:
 
     def set_project_stage_task_done(self, project_stage_task_id, is_done):
         self.project_stage_task_model.set_done(project_stage_task_id, is_done)
+
+    # --- Schema Abstraction Methods ---
+    def get_project_schema(self, project_id):
+        project = self.get_project(project_id)
+        if not project:
+            return None
+        stage = self.get_stage(project.stage_id)
+        stage_name = stage.name if stage else ""
+        # Build roles dict: label -> contact name
+        roles = {label: "" for label in ProjectSchema.ROLE_LABELS}
+        project_roles = self.list_project_roles(project.id)
+        contacts = self.list_contacts()
+        # Map roles to labels
+        role_label_map = {"Customer": ["Customer 1", "Customer 2"], "Constructor": "Constructor", "Inspector": "Inspector", "Consultant": "Consultant"}
+        customer_count = 0
+        for r in project_roles:
+            contact = next((c for c in contacts if c.id == r.contact_id), None)
+            if not contact:
+                continue
+            name = f"{contact.first_name} {contact.last_name}"
+            if r.role == "Customer":
+                label = role_label_map["Customer"][customer_count] if customer_count < 2 else None
+                if label:
+                    roles[label] = name
+                customer_count += 1
+            else:
+                label = role_label_map[r.role]
+                roles[label] = name
+        return ProjectSchema(project, stage_name, roles)
+
+    def get_contact_schema(self, contact_id):
+        contact = self.get_contact(contact_id)
+        if not contact:
+            return None
+        return ContactSchema(contact)
+
+    def get_task_schemas_for_project_stage(self, project_id, stage_id):
+        # Returns list of TaskSchema for the given project and stage
+        tasks = self.list_tasks_by_stage(stage_id)
+        project_tasks = {t.task_id: t for t in self.list_project_stage_tasks(project_id)}
+        schemas = []
+        for t in tasks:
+            is_done = project_tasks.get(t.id, None).is_done if t.id in project_tasks else False
+            schemas.append(TaskSchema(t.id, t.description, is_done))
+        return schemas

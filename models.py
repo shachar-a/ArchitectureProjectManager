@@ -126,11 +126,27 @@ class Database:
                 cursor.execute("INSERT INTO stages (name) VALUES (?)", (s,))
         cursor.execute("SELECT COUNT(*) FROM tasks")
         if cursor.fetchone()[0] == 0:
-            # Example: Add 2 tasks per stage for demo
+            # Insert tasks according to mapping
+            stage_task_map = {
+                "Project Definition": ["Collects family needs"],
+                "Planning Information": [
+                    "צילום ת.ז", "כתובת למשלוח מכתבים", "פרטי המגרש", "חוזה מנהל", "מפת מדידה עדכנית",
+                    "צילומי המגרש עם תאריך", "תשלום עבור פתיחת תיק המידע", "בדיקה האם קיימים עצים בוגרים במגרש"
+                ],
+                "Design": ["בניית תוכנית אדריכלית"],
+                "Garmoshka": ["גרמושקה בסיסית", "חישוב שטחים", "גרמושקה ממוחשבת"],
+                "Building approval pre-check": ["קונסטרוקטור נבחר", "יועץ סניטציה נבחר", "חוזה מנהל", "נסח טאבו"],
+                "Pikud Haoref": ["תוכנית ממד"],
+                "Techen": ["בחירת מכון"],
+                "Final Approval": ["חישוב פסולת"]
+            }
             cursor.execute("SELECT id, name FROM stages")
-            for stage_id, name in cursor.fetchall():
-                cursor.execute("INSERT INTO tasks (stage_id, description) VALUES (?, ?)", (stage_id, f"Task 1 for {name}"))
-                cursor.execute("INSERT INTO tasks (stage_id, description) VALUES (?, ?)", (stage_id, f"Task 2 for {name}"))
+            stage_id_map = {name: id for id, name in cursor.fetchall()}
+            for stage_name, tasks in stage_task_map.items():
+                stage_id = stage_id_map.get(stage_name)
+                if stage_id:
+                    for desc in tasks:
+                        cursor.execute("INSERT INTO tasks (stage_id, description) VALUES (?, ?)", (stage_id, desc))
         connection.commit()
         connection.close()
 
@@ -290,3 +306,81 @@ class ProjectStageTaskModel:
             "UPDATE project_stage_tasks SET is_done=? WHERE id=?",
             (int(is_done), project_stage_task_id)
         )
+
+# --- Schema Abstractions for GUI/View Layer ---
+from typing import Dict, Any
+
+class ProjectSchema:
+    # Centralized field definitions for Project
+    FIELDS = [
+        ("Location", "location"),
+        ("Start Date", "start_date"),
+        ("End Date", "end_date"),
+        ("Active", "active"),
+        ("Stage", "stage_name"),
+        ("Document Path", "document_path"),
+    ]
+    ROLE_LABELS = ["Customer 1", "Customer 2", "Constructor", "Inspector", "Consultant"]
+
+    def __init__(self, project: Project, stage_name: str, roles: Dict[str, str]):
+        self.id = project.id
+        self.location = project.location
+        self.start_date = project.start_date
+        self.end_date = project.end_date
+        self.active = project.active
+        self.stage_id = project.stage_id
+        self.stage_name = stage_name
+        self.document_path = project.document_path
+        self.roles = roles  # Dict[label, contact_name]
+
+    @classmethod
+    def get_field_labels(cls):
+        return [label for label, _ in cls.FIELDS]
+
+    @classmethod
+    def get_field_keys(cls):
+        return [attr for _, attr in cls.FIELDS]
+
+    def as_dict(self) -> Dict[str, Any]:
+        d = {label: getattr(self, attr) for label, attr in self.FIELDS}
+        d["id"] = self.id
+        d["roles"] = self.roles
+        return d
+
+class ContactSchema:
+    FIELDS = [
+        ("First Name", "first_name"),
+        ("Last Name", "last_name"),
+        ("Phone", "phone"),
+        ("Email", "email"),
+        ("Address", "address"),
+    ]
+
+    def __init__(self, contact: Contact):
+        self.id = contact.id
+        self.first_name = contact.first_name
+        self.last_name = contact.last_name
+        self.phone = contact.phone
+        self.email = contact.email
+        self.address = contact.address
+
+    def as_dict(self) -> Dict[str, Any]:
+        d = {label: getattr(self, attr) for label, attr in self.FIELDS}
+        d["id"] = self.id
+        return d
+
+class TaskSchema:
+    FIELDS = [
+        ("Description", "description"),
+        ("Is Done", "is_done"),
+    ]
+
+    def __init__(self, task_id: int, description: str, is_done: bool):
+        self.id = task_id
+        self.description = description
+        self.is_done = is_done
+
+    def as_dict(self) -> Dict[str, Any]:
+        d = {label: getattr(self, attr) for label, attr in self.FIELDS}
+        d["id"] = self.id
+        return d
