@@ -2,6 +2,15 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from models import ProjectSchema
 
+# Central place to control GUI directionality (LTR or RTL)
+GUI_DIRECTION = 'rtl'  # Change to 'rtl' for right-to-left
+
+# Helper for direction-aware alignment
+GUI_ANCHOR = 'w' if GUI_DIRECTION == 'ltr' else 'e'
+GUI_JUSTIFY = 'left' if GUI_DIRECTION == 'ltr' else 'right'
+GUI_STICKY = 'w' if GUI_DIRECTION == 'ltr' else 'e'
+GUI_SIDE = 'left' if GUI_DIRECTION == 'ltr' else 'right'
+
 class AppView(tk.Tk):
     def __init__(self, controller):
         super().__init__()
@@ -26,8 +35,8 @@ class AppView(tk.Tk):
         self._clear_main()
         self.main_frame = tk.Frame(self)
         self.main_frame.pack(fill='both', expand=True)
-        tk.Label(self.main_frame, text="Welcome to Architecture Project Manager", font=("Arial", 20, "bold")).pack(pady=40)
-        tk.Label(self.main_frame, text="Use the menu to manage projects and contacts.", font=("Arial", 14)).pack(pady=10)
+        tk.Label(self.main_frame, text="Welcome to Architecture Project Manager", font=("Arial", 20, "bold"), anchor=GUI_ANCHOR, justify=GUI_JUSTIFY).pack(pady=40, anchor=GUI_ANCHOR)
+        tk.Label(self.main_frame, text="Use the menu to manage projects and contacts.", font=("Arial", 14), anchor=GUI_ANCHOR, justify=GUI_JUSTIFY).pack(pady=10, anchor=GUI_ANCHOR)
 
     # --- Project List View ---
     def _show_projects(self):
@@ -36,21 +45,21 @@ class AppView(tk.Tk):
         self.main_frame.pack(fill='both', expand=True)
         top = tk.Frame(self.main_frame)
         top.pack(fill='x', pady=5)
-        tk.Label(top, text="Projects", font=("Arial", 16, "bold")).pack(side='left', padx=10)
+        tk.Label(top, text="Projects", font=("Arial", 16, "bold"), anchor=GUI_ANCHOR, justify=GUI_JUSTIFY).pack(side=GUI_SIDE, padx=10)
         self.project_search_var = tk.StringVar()
-        tk.Entry(top, textvariable=self.project_search_var, width=30).pack(side='left', padx=5)
-        tk.Button(top, text="Search", command=self._refresh_projects).pack(side='left')
+        tk.Entry(top, textvariable=self.project_search_var, width=30, justify=GUI_JUSTIFY).pack(side=GUI_SIDE, padx=5)
+        tk.Button(top, text="Search", command=self._refresh_projects).pack(side=GUI_SIDE)
         self.active_only_var = tk.BooleanVar()
-        tk.Checkbutton(top, text="Active Only", variable=self.active_only_var, command=self._refresh_projects).pack(side='left', padx=10)
-        tk.Button(top, text="Add Project", command=self._add_project_dialog).pack(side='right', padx=10)
+        tk.Checkbutton(top, text="Active Only", variable=self.active_only_var, command=self._refresh_projects).pack(side=GUI_SIDE, padx=10)
+        tk.Button(top, text="Add Project", command=self._add_project_dialog).pack(side='right' if GUI_SIDE == 'left' else 'left', padx=10)
         # Table columns driven by schema
         columns = ["id", "Project Name"] + [label for label, _ in ProjectSchema.FIELDS]
         style = ttk.Style()
         style.configure("Bold.Treeview.Heading", font=("Arial", 10, "bold"))
         self.project_tree = ttk.Treeview(self.main_frame, columns=columns, show='headings', style="Bold.Treeview")
         for col in columns:
-            self.project_tree.heading(col, text=col, command=lambda c=col: self._sort_project_tree(c, False), anchor='w')
-            self.project_tree.column(col, width=120, anchor='w')
+            self.project_tree.heading(col, text=col, command=lambda c=col: self._sort_project_tree(c, False), anchor=GUI_ANCHOR)
+            self.project_tree.column(col, width=120, anchor=GUI_ANCHOR)
         self.project_tree.pack(fill='both', expand=True, pady=10)
         self.project_tree.bind('<Double-1>', self._on_project_double_click)
         self._refresh_projects()
@@ -82,22 +91,25 @@ class AppView(tk.Tk):
                     value = 'Yes' if value else 'No'
                 row.append(value if value is not None else "")
             self.project_tree.insert('', 'end', values=tuple(row))
-
     def _auto_project_name(self, project_schema):
-        # Use roles and location from schema
+        """Generate a direction-aware project name string.
+        For RTL: Shows project location, then dash, then customer names
+        For LTR: Shows 'Project:' prefix, then customer names, then dash, then location"""
+        # Get customer names from roles
         customers = [project_schema.roles.get(label, "") for label in ["Customer 1", "Customer 2"] if project_schema.roles.get(label, "")]
-        if customers:
-            names = ', '.join(customers)
-            return f"{names} - {project_schema.location}"
-        return f"Project {project_schema.id} - {project_schema.location}"
+        names = ', '.join(customers) if customers else f"Project {project_schema.id}"
+
+        # Format name based on GUI direction
+        if GUI_DIRECTION == 'rtl':
+            return f"{project_schema.location} - {names}"
+        else:
+            return f"Project: {names} - {project_schema.location}"
 
     def _on_project_double_click(self, event):
         item = self.project_tree.selection()
         if item:
             project_id = int(self.project_tree.item(item[0])['values'][0])
-            self._show_project_detail(project_id)
-
-    # --- Project Detail View ---
+            self._show_project_detail(project_id)    # --- Project Detail View ---
     def _show_project_detail(self, project_id):
         project_schema = self.controller.get_project_schema(project_id)
         if not project_schema:
@@ -108,8 +120,9 @@ class AppView(tk.Tk):
         self.main_frame.pack(fill='both', expand=True)
         top = tk.Frame(self.main_frame)
         top.pack(fill='x', pady=5)
-        title = tk.Label(top, text=f"Project: {self._auto_project_name(project_schema)}", font=("Arial", 16, "bold"))
-        title.pack(side='top', pady=10, anchor='center', expand=True)
+        title = tk.Label(top, text=self._auto_project_name(project_schema), font=("Arial", 16, "bold"), anchor=GUI_ANCHOR, justify=GUI_JUSTIFY)
+        # For RTL, right-align the label using pack(side='right', anchor='e')
+        title.pack(side=GUI_SIDE, pady=10, anchor=GUI_ANCHOR, fill='x')
         form = tk.Frame(self.main_frame)
         form.pack(fill='x', pady=10)
         contacts = self.controller.list_contacts()
@@ -119,59 +132,105 @@ class AppView(tk.Tk):
         row_idx = 0
         # Role dropdowns (schema-driven)
         for label in project_schema.ROLE_LABELS:
-            tk.Label(form, text=label, font=("Arial", 12, "bold")).grid(row=row_idx, column=0, sticky='e', padx=5, pady=4)
             var = tk.StringVar(value=project_schema.roles.get(label, ""))
-            om = ttk.Combobox(form, textvariable=var, values=contact_names, state='readonly')
-            om.grid(row=row_idx, column=1, sticky='w')
+            om = ttk.Combobox(form, textvariable=var, values=contact_names, state='readonly', justify=GUI_JUSTIFY, width=30)
+            label_widget = tk.Label(form, text=label, font=("Arial", 12, "bold"), anchor=GUI_ANCHOR, justify=GUI_JUSTIFY)
+            if GUI_DIRECTION == 'rtl':
+                om.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                label_widget.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
+            else:
+                label_widget.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                om.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
             self.role_vars[label] = var
             row_idx += 1
         # Project fields (schema-driven)
         self._end_date_entry = None
         for label, attr in project_schema.FIELDS:
-            tk.Label(form, text=label, font=("Arial", 12, "bold")).grid(row=row_idx, column=0, sticky='e', padx=5, pady=4)
             value = getattr(project_schema, attr)
+            label_widget = tk.Label(form, text=label, font=("Arial", 12, "bold"), anchor=GUI_ANCHOR, justify=GUI_JUSTIFY)
             if label == "Active":
                 var = tk.BooleanVar(value=value)
-                cb = tk.Checkbutton(form, variable=var, command=self._on_active_toggle)
-                cb.grid(row=row_idx, column=1, sticky='w')
+                cb = tk.Checkbutton(form, variable=var, command=self._on_active_toggle, anchor=GUI_ANCHOR, justify=GUI_JUSTIFY)
+                if GUI_DIRECTION == 'rtl':
+                    cb.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                    label_widget.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
+                else:
+                    label_widget.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                    cb.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
                 self.project_detail_vars[label] = var
             elif label == "Stage":
                 stages = self.controller.list_stages()
                 stage_names = [s.name for s in stages]
                 var = tk.StringVar(value=value)
-                om = ttk.Combobox(form, textvariable=var, values=stage_names, state='readonly')
-                om.grid(row=row_idx, column=1, sticky='w')
+                om = ttk.Combobox(form, textvariable=var, values=stage_names, state='readonly', justify=GUI_JUSTIFY, width=30)
+                if GUI_DIRECTION == 'rtl':
+                    om.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                    label_widget.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
+                else:
+                    label_widget.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                    om.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
                 om.bind('<<ComboboxSelected>>', lambda e: self._reload_stage_tasks(project_schema))
                 self.project_detail_vars[label] = var
             elif label == "End Date":
                 var = tk.StringVar(value=value if value else "")
-                entry = tk.Entry(form, textvariable=var, width=22)
-                entry.grid(row=row_idx, column=1, sticky='w')
+                entry = tk.Entry(form, textvariable=var, width=30, justify=GUI_JUSTIFY)
+                if GUI_DIRECTION == 'rtl':
+                    entry.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                    label_widget.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
+                else:
+                    label_widget.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                    entry.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
                 self.project_detail_vars[label] = var
                 self._end_date_entry = entry
             elif label == "Document Path":
                 var = tk.StringVar(value=value)
-                entry = tk.Entry(form, textvariable=var, width=40)
-                entry.grid(row=row_idx, column=1, sticky='w')
-                btn = tk.Button(form, text="Browse", command=lambda v=var: self._browse_file(v))
-                btn.grid(row=row_idx, column=2, sticky='w')
+                # Create a frame to hold entry and button
+                entry_btn_frame = tk.Frame(form)
+                entry = tk.Entry(entry_btn_frame, textvariable=var, width=30, justify=GUI_JUSTIFY)
+                btn = tk.Button(entry_btn_frame, text="Browse", command=lambda v=var: self._browse_file(v), anchor=GUI_ANCHOR, justify=GUI_JUSTIFY)
+                if GUI_DIRECTION == 'rtl':
+                    btn.pack(side='left', padx=(0,2))
+                    entry.pack(side='left', padx=(2,0))
+                    entry_btn_frame.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(0,10), pady=5)
+                    label_widget.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
+                else:
+                    entry.pack(side='left', padx=(0,2))
+                    btn.pack(side='left', padx=(2,0))
+                    label_widget.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                    entry_btn_frame.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
                 self.project_detail_vars[label] = var
             else:
                 var = tk.StringVar(value=value)
-                tk.Entry(form, textvariable=var, width=30).grid(row=row_idx, column=1, sticky='w')
+                entry = tk.Entry(form, textvariable=var, width=30, justify=GUI_JUSTIFY)
+                if GUI_DIRECTION == 'rtl':
+                    entry.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                    label_widget.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
+                else:
+                    label_widget.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(10, 0), pady=5)
+                    entry.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(0, 10), pady=5)
                 self.project_detail_vars[label] = var
             row_idx += 1
-        tk.Label(self.main_frame, text="Stage Tasks", font=("Arial", 13, "bold"), anchor='w', justify='left').pack(anchor='w', pady=8, padx=10)
+        # Make columns expand and align according to direction
+        form.grid_columnconfigure(0, weight=1, uniform="a")
+        form.grid_columnconfigure(1, weight=2, uniform="a")
+        form.grid_columnconfigure(2, weight=0)
+        tk.Label(self.main_frame, text="Stage Tasks", font=("Arial", 13, "bold"), anchor=GUI_ANCHOR, justify=GUI_JUSTIFY).pack(anchor=GUI_ANCHOR, pady=8, padx=10)
         self._show_project_stage_tasks(project_schema)
-        self._update_end_date_state()
+        self._update_end_date_state()        # Save/Delete/Close buttons at the bottom, center-aligned and adjacent
         btns = tk.Frame(self.main_frame)
         btns.pack(side='bottom', pady=20)
         save_btn = tk.Button(btns, text="Save", width=12, command=lambda: self._save_project_detail(project_schema))
         delete_btn = tk.Button(btns, text="Delete", width=12, command=lambda pid=project_schema.id: self._delete_project(pid))
         close_btn = tk.Button(btns, text="Close", width=12, command=self._show_projects)
-        save_btn.pack(side='left', padx=5)
-        delete_btn.pack(side='left', padx=5)
-        close_btn.pack(side='left', padx=5)
+        # Center the button group and keep them adjacent
+        btns.grid_columnconfigure(0, weight=1)
+        btns.grid_columnconfigure(1, weight=0)
+        btns.grid_columnconfigure(2, weight=0)
+        btns.grid_columnconfigure(3, weight=0)
+        btns.grid_columnconfigure(4, weight=1)
+        save_btn.grid(row=0, column=1, padx=5)
+        delete_btn.grid(row=0, column=2, padx=5)
+        close_btn.grid(row=0, column=3, padx=5)
 
     def _show_project_stage_tasks(self, project_schema):
         if hasattr(self, '_stage_task_frame') and self._stage_task_frame:
@@ -187,8 +246,21 @@ class AppView(tk.Tk):
         task_schemas = self.controller.get_task_schemas_for_project_stage(project_schema.id, stage_id) if stage_id else []
         for t in task_schemas:
             var = tk.BooleanVar(value=t.is_done)
-            cb = tk.Checkbutton(self._stage_task_frame, text=t.description, variable=var, command=lambda tid=t.id, v=var: self._toggle_task_done(project_schema.id, tid, v))
-            cb.pack(anchor='w', padx=10)
+            # Create a frame for each checkbox + label pair
+            frame = tk.Frame(self._stage_task_frame)
+            if GUI_DIRECTION == 'rtl':
+                # Text to the left of checkbox
+                tk.Label(frame, text=t.description).pack(side='left', padx=(0, 6))
+                cb = tk.Checkbutton(frame, variable=var)
+                cb.pack(side='left')
+                frame.pack(anchor=GUI_ANCHOR, padx=10)
+            else:
+                # Text to the right of checkbox 
+                cb = tk.Checkbutton(frame, variable=var)
+                cb.pack(side='left')
+                tk.Label(frame, text=t.description).pack(side='left', padx=(6, 0))
+                frame.pack(anchor=GUI_ANCHOR, padx=10)
+            cb.config(command=lambda tid=t.id, v=var: self._toggle_task_done(project_schema.id, tid, v))
 
     def _on_active_toggle(self):
         self._update_end_date_state()
@@ -267,45 +339,54 @@ class AppView(tk.Tk):
         cust_labels = ProjectSchema.ROLE_LABELS
         customer_vars = {}
         for j, cust_label in enumerate(cust_labels):
-            tk.Label(dialog, text=cust_label).grid(row=j, column=0, sticky='e', padx=5, pady=4)
+            tk.Label(dialog, text=cust_label, anchor=GUI_ANCHOR, justify=GUI_JUSTIFY).grid(row=j, column=0, sticky=GUI_STICKY, padx=5, pady=4)
             var = tk.StringVar()
-            om = ttk.Combobox(dialog, textvariable=var, values=contact_names, state='readonly')
-            om.grid(row=j, column=1, sticky='w')
+            om = ttk.Combobox(dialog, textvariable=var, values=contact_names, state='readonly', justify=GUI_JUSTIFY)
+            om.grid(row=j, column=1, sticky=GUI_STICKY)
             customer_vars[cust_label] = var
         fields = [label for label, _ in ProjectSchema.FIELDS]
         vars = {}
         end_date_entry = None
         for i, label in enumerate(fields):
             row_idx = i + len(cust_labels)
-            tk.Label(dialog, text=label).grid(row=row_idx, column=0, sticky='e', padx=5, pady=4)
+            tk.Label(dialog, text=label, anchor=GUI_ANCHOR, justify=GUI_JUSTIFY).grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=5, pady=4)
             if label == "Active":
                 var = tk.BooleanVar(value=True)
-                cb = tk.Checkbutton(dialog, variable=var, command=lambda: update_end_date_state())
-                cb.grid(row=row_idx, column=1, sticky='w')
+                cb = tk.Checkbutton(dialog, variable=var, command=lambda: update_end_date_state(), anchor=GUI_ANCHOR, justify=GUI_JUSTIFY)
+                cb.grid(row=row_idx, column=1, sticky=GUI_STICKY)
                 vars[label] = var
             elif label == "Stage":
                 stages = self.controller.list_stages()
                 stage_names = [s.name for s in stages]
                 var = tk.StringVar(value=stage_names[0] if stage_names else "")
-                om = ttk.Combobox(dialog, textvariable=var, values=stage_names, state='readonly')
-                om.grid(row=row_idx, column=1, sticky='w')
+                om = ttk.Combobox(dialog, textvariable=var, values=stage_names, state='readonly', justify=GUI_JUSTIFY)
+                om.grid(row=row_idx, column=1, sticky=GUI_STICKY)
                 vars[label] = var
             elif label == "End Date":
                 var = tk.StringVar()
-                entry = tk.Entry(dialog, textvariable=var, width=22)
-                entry.grid(row=row_idx, column=1, sticky='w')
+                entry = tk.Entry(dialog, textvariable=var, width=22, justify=GUI_JUSTIFY)
+                entry.grid(row=row_idx, column=1, sticky=GUI_STICKY)
                 vars[label] = var
                 end_date_entry = entry
             elif label == "Document Path":
                 var = tk.StringVar()
-                entry = tk.Entry(dialog, textvariable=var, width=40)
-                entry.grid(row=row_idx, column=1, sticky='w')
-                btn = tk.Button(dialog, text="Browse", command=lambda v=var: self._browse_file(v))
-                btn.grid(row=row_idx, column=2, sticky='w')
+                entry_btn_frame = tk.Frame(dialog)
+                entry = tk.Entry(entry_btn_frame, textvariable=var, width=30, justify=GUI_JUSTIFY)
+                btn = tk.Button(entry_btn_frame, text="Browse", command=lambda v=var: self._browse_file(v), anchor=GUI_ANCHOR, justify=GUI_JUSTIFY)
+                if GUI_DIRECTION == 'rtl':
+                    btn.pack(side='left', padx=(0,2))
+                    entry.pack(side='left', padx=(2,0))
+                    entry_btn_frame.grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(0,10), pady=4)
+                    tk.Label(dialog, text=label, anchor=GUI_ANCHOR, justify=GUI_JUSTIFY).grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(10,0), pady=4)
+                else:
+                    entry.pack(side='left', padx=(0,2))
+                    btn.pack(side='left', padx=(2,0))
+                    tk.Label(dialog, text=label, anchor=GUI_ANCHOR, justify=GUI_JUSTIFY).grid(row=row_idx, column=0, sticky=GUI_STICKY, padx=(0,10), pady=4)
+                    entry_btn_frame.grid(row=row_idx, column=1, sticky=GUI_STICKY, padx=(10,0), pady=4)
                 vars[label] = var
             else:
                 var = tk.StringVar()
-                tk.Entry(dialog, textvariable=var, width=30).grid(row=row_idx, column=1, sticky='w')
+                tk.Entry(dialog, textvariable=var, width=30, justify=GUI_JUSTIFY).grid(row=row_idx, column=1, sticky=GUI_STICKY)
                 vars[label] = var
         def update_end_date_state():
             if vars["Active"].get():
@@ -346,10 +427,10 @@ class AppView(tk.Tk):
                 messagebox.showerror("Error", str(e))
         btn_frame = tk.Frame(dialog)
         btn_frame.grid(row=len(fields)+len(cust_labels), column=0, columnspan=2, pady=10)
-        save_btn = tk.Button(btn_frame, text="Save", command=add, width=12)
-        save_btn.pack(side='left', padx=8)
-        cancel_btn = tk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=12)
-        cancel_btn.pack(side='left', padx=8)
+        save_btn = tk.Button(btn_frame, text="Save", command=add, width=12, anchor=GUI_ANCHOR, justify=GUI_JUSTIFY)
+        save_btn.pack(side=GUI_SIDE, padx=8)
+        cancel_btn = tk.Button(btn_frame, text="Cancel", command=dialog.destroy, width=12, anchor=GUI_ANCHOR, justify=GUI_JUSTIFY)
+        cancel_btn.pack(side=GUI_SIDE, padx=8)
 
     def _save_project_role(self, project, label):
         contacts = self.controller.list_contacts()
@@ -478,8 +559,7 @@ class AppView(tk.Tk):
                 if tags:
                     project_id = int(tags[0])
                     self._show_project_detail(project_id)
-        tree.bind('<Double-1>', on_linked_project_double_click)
-        # Save/Delete/Close buttons at the bottom, center-aligned and adjacent
+        tree.bind('<Double-1>', on_linked_project_double_click)        # Save/Delete/Close buttons at the bottom, center-aligned and adjacent
         btns = tk.Frame(self.main_frame)
         btns.pack(side='bottom', pady=20)
         save_btn = tk.Button(btns, text="Save", width=12, command=lambda: self._save_contact_detail(contact))
@@ -487,11 +567,13 @@ class AppView(tk.Tk):
         close_btn = tk.Button(btns, text="Close", width=12, command=self._show_contacts)
         # Center the button group and keep them adjacent
         btns.grid_columnconfigure(0, weight=1)
-        btns.grid_columnconfigure(1, weight=1)
-        btns.grid_columnconfigure(2, weight=1)
-        save_btn.grid(row=0, column=0, padx=10)
-        delete_btn.grid(row=0, column=1, padx=10)
-        close_btn.grid(row=0, column=2, padx=10)
+        btns.grid_columnconfigure(1, weight=0)
+        btns.grid_columnconfigure(2, weight=0)
+        btns.grid_columnconfigure(3, weight=0)
+        btns.grid_columnconfigure(4, weight=1)
+        save_btn.grid(row=0, column=1, padx=5)
+        delete_btn.grid(row=0, column=2, padx=5)
+        close_btn.grid(row=0, column=3, padx=5)
 
     def _save_contact_detail(self, contact):
         try:

@@ -317,8 +317,8 @@ class ProjectSchema:
         ("Start Date", "start_date"),
         ("End Date", "end_date"),
         ("Active", "active"),
-        ("Stage", "stage_name"),
         ("Document Path", "document_path"),
+        ("Stage", "stage_name"),
     ]
     ROLE_LABELS = ["Customer 1", "Customer 2", "Constructor", "Inspector", "Consultant"]
 
